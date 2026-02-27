@@ -1,6 +1,7 @@
 import time
 from typing import Optional
 
+import diffusers
 import torch
 from diffusers import AutoencoderKLWan, FlowMatchEulerDiscreteScheduler
 from diffusers.utils.torch_utils import randn_tensor
@@ -173,15 +174,27 @@ class WanPipeline(BasePipeline):
 
         if PipelineComponent.SCHEDULER not in skip_components:
             logger.info("Loading scheduler...")
-            self.scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+            sched_cfg = FlowMatchEulerDiscreteScheduler.load_config(
+                checkpoint_dir, subfolder=PipelineComponent.SCHEDULER
+            )
+            scheduler_class_name = sched_cfg.get("_class_name", "FlowMatchEulerDiscreteScheduler")
+            SchedulerClass = getattr(
+                diffusers, scheduler_class_name, FlowMatchEulerDiscreteScheduler
+            )
+            self.scheduler = SchedulerClass.from_pretrained(
                 checkpoint_dir,
                 subfolder=PipelineComponent.SCHEDULER,
             )
-            if not hasattr(self.scheduler.config, "shift") or self.scheduler.config.shift == 1.0:
-                self.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
-                    self.scheduler.config,
-                    shift=5.0,
-                )
+            if isinstance(self.scheduler, FlowMatchEulerDiscreteScheduler):
+                if (
+                    not hasattr(self.scheduler.config, "shift")
+                    or self.scheduler.config.shift == 1.0
+                ):
+                    shift = getattr(self.scheduler.config, "flow_shift", None) or 5.0
+                    self.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+                        self.scheduler.config,
+                        shift=shift,
+                    )
 
         self.video_processor = VideoProcessor(vae_scale_factor=self.vae_scale_factor_spatial)
 
@@ -303,7 +316,7 @@ class WanPipeline(BasePipeline):
         guidance_scale_2: Optional[float] = None,
         boundary_ratio: Optional[float] = None,
         seed: int = 42,
-        max_sequence_length: int = 226,
+        max_sequence_length: int = 512,
     ):
         pipeline_start = time.time()
         generator = torch.Generator(device=self.device).manual_seed(seed)
@@ -336,7 +349,7 @@ class WanPipeline(BasePipeline):
             guidance_scale = 4.0 if self.is_wan22 else 5.0
 
         if self.is_wan22 and guidance_scale_2 is None:
-            guidance_scale_2 = 3.0
+            guidance_scale_2 = guidance_scale  # Match HF: default to guidance_scale when unset
 
         # Validate two-stage denoising configuration
         if guidance_scale_2 is not None and boundary_ratio is None:
@@ -401,10 +414,10 @@ class WanPipeline(BasePipeline):
                 current_model = self.transformer
 
             return current_model(
-                hidden_states=latents,
+                hidden_states=latents.to(self.dtype),
                 timestep=timestep,
                 encoder_hidden_states=encoder_hidden_states,
-            )
+            ).to(latents.dtype)
 
         # Two-stage denoising: model switching in forward_fn, guidance scale switching in denoise()
         latents = self.denoise(
@@ -524,7 +537,7 @@ class WanPipeline(BasePipeline):
             height // self.vae_scale_factor_spatial,
             width // self.vae_scale_factor_spatial,
         )
-        return randn_tensor(shape, generator=generator, device=self.device, dtype=self.dtype)
+        return randn_tensor(shape, generator=generator, device=self.device, dtype=torch.float32)
 
     @nvtx_range("_decode_latents", color="blue")
     def _decode_latents(self, latents):

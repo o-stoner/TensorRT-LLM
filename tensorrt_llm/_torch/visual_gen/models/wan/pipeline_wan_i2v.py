@@ -3,6 +3,7 @@ import os
 import time
 from typing import Optional, Tuple, Union
 
+import diffusers
 import PIL.Image
 import torch
 from diffusers import AutoencoderKLWan, FlowMatchEulerDiscreteScheduler
@@ -170,15 +171,27 @@ class WanImageToVideoPipeline(BasePipeline):
 
         if PipelineComponent.SCHEDULER not in skip_components:
             logger.info("Loading scheduler...")
-            self.scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+            sched_cfg = FlowMatchEulerDiscreteScheduler.load_config(
+                checkpoint_dir, subfolder=PipelineComponent.SCHEDULER
+            )
+            scheduler_class_name = sched_cfg.get("_class_name", "FlowMatchEulerDiscreteScheduler")
+            SchedulerClass = getattr(
+                diffusers, scheduler_class_name, FlowMatchEulerDiscreteScheduler
+            )
+            self.scheduler = SchedulerClass.from_pretrained(
                 checkpoint_dir,
                 subfolder=PipelineComponent.SCHEDULER,
             )
-            if not hasattr(self.scheduler.config, "shift") or self.scheduler.config.shift == 1.0:
-                self.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
-                    self.scheduler.config,
-                    shift=5.0,
-                )
+            if isinstance(self.scheduler, FlowMatchEulerDiscreteScheduler):
+                if (
+                    not hasattr(self.scheduler.config, "shift")
+                    or self.scheduler.config.shift == 1.0
+                ):
+                    shift = getattr(self.scheduler.config, "flow_shift", None) or 5.0
+                    self.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+                        self.scheduler.config,
+                        shift=shift,
+                    )
 
         if self.transformer_2 is not None and self.boundary_ratio is None:
             raise RuntimeError(
@@ -377,7 +390,7 @@ class WanImageToVideoPipeline(BasePipeline):
             guidance_scale = 4.0 if self.is_wan22 else 5.0
 
         if self.is_wan22 and guidance_scale_2 is None:
-            guidance_scale_2 = 3.0  # Wan2.2 recommended default
+            guidance_scale_2 = guidance_scale  # Match HF: default to guidance_scale when unset
 
         # Validate two-stage denoising configuration
         if guidance_scale_2 is not None and boundary_ratio is None:
@@ -501,7 +514,7 @@ class WanImageToVideoPipeline(BasePipeline):
             else:
                 condition_to_use = condition_data
 
-            latent_model_input = torch.cat([latents_input, condition_to_use], dim=1).to(self.dtype)
+            latent_model_input = torch.cat([latents_input.to(self.dtype), condition_to_use], dim=1)
             timestep_input = timestep.expand(latents_input.shape[0])
 
             # Forward pass with I2V conditioning
@@ -512,7 +525,7 @@ class WanImageToVideoPipeline(BasePipeline):
                 timestep=timestep_input,
                 encoder_hidden_states=encoder_hidden_states,
                 encoder_hidden_states_image=image_embeds,
-            )
+            ).to(latents_input.dtype)
 
         # Two-stage denoising: model switching in forward_fn, guidance scale switching in denoise()
         latents = self.denoise(
@@ -657,7 +670,7 @@ class WanImageToVideoPipeline(BasePipeline):
 
         # Create random noise latents
         shape = (1, num_channels_latents, num_latent_frames, latent_height, latent_width)
-        latents = randn_tensor(shape, generator=generator, device=self.device, dtype=self.dtype)
+        latents = randn_tensor(shape, generator=generator, device=self.device, dtype=torch.float32)
 
         # Load and preprocess image(s)
         if isinstance(image, str):
@@ -706,11 +719,11 @@ class WanImageToVideoPipeline(BasePipeline):
         latents_mean = (
             torch.tensor(self.vae.config.latents_mean)
             .view(1, self.vae.config.z_dim, 1, 1, 1)
-            .to(latents.device, latents.dtype)
+            .to(latents.device, latent_condition.dtype)
         )
         latents_std = 1.0 / torch.tensor(self.vae.config.latents_std).view(
             1, self.vae.config.z_dim, 1, 1, 1
-        ).to(latents.device, latents.dtype)
+        ).to(latents.device, latent_condition.dtype)
         latent_condition = (latent_condition - latents_mean) * latents_std
 
         # Create mask in video frame space
