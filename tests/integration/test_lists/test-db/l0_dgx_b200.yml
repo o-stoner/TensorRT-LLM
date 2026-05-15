@@ -317,13 +317,14 @@ l0_dgx_b200:
   - examples/test_visual_gen_multi_gpu.py::test_wan22_t2v_lpips_against_golden_multi_gpu[cfg2_ulysses2]
   - examples/test_visual_gen_multi_gpu.py::test_wan22_t2v_lpips_against_golden_multi_gpu[ulysses2_ring2]
   - examples/test_visual_gen_multi_gpu.py::test_wan22_t2v_lpips_against_golden_multi_gpu[attn2d_2x2]
-  - examples/test_visual_gen.py::test_vbench_dimension_score_wan
-  - examples/test_visual_gen.py::test_vbench_dimension_score_wan22_a14b_fp8
-  - examples/test_visual_gen.py::test_vbench_dimension_score_wan22_a14b_nvfp4
   - visual_gen/test_visual_gen_benchmark.py::test_offline_benchmark
   - visual_gen/test_visual_gen_benchmark.py::test_online_benchmark[openai-videos]
   - examples/test_visual_gen.py::test_vbench_dimension_score_ltx2_bf16
   - examples/test_visual_gen.py::test_vbench_dimension_score_ltx2_fp8
+  - examples/test_visual_gen.py::test_wan_t2v_vbench[wan21_bf16]
+  - examples/test_visual_gen.py::test_wan_t2v_vbench[wan22_fp8]
+  - examples/test_visual_gen.py::test_wan_i2v_vbench[wan21_i2v_480p]
+  - examples/test_visual_gen.py::test_wan_i2v_vbench[wan22_i2v]
   - accuracy/test_llm_api_pytorch.py::TestQwen3_30B_A3B_Instruct_2507::test_skip_softmax_attention_4gpus[target_sparsity_0.5-fp8kv=False]
   - accuracy/test_llm_api_pytorch.py::TestQwen3_30B_A3B_Instruct_2507::test_skip_softmax_attention_4gpus[target_sparsity_0.5-fp8kv=True]
   - accuracy/test_llm_api_pytorch.py::TestQwen3_30B_A3B_Instruct_2507::test_skip_softmax_attention_4gpus[target_sparsity_0.9-fp8kv=False]

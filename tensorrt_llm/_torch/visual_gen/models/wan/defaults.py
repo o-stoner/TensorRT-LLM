@@ -34,6 +34,7 @@ _WAN21_480P_PARAMS = {
     "max_sequence_length": 512,
     "num_frames": 81,
     "frame_rate": 16.0,
+    "seed": 42,
 }
 
 _WAN21_720P_PARAMS = {
@@ -44,6 +45,7 @@ _WAN21_720P_PARAMS = {
     "max_sequence_length": 512,
     "num_frames": 81,
     "frame_rate": 16.0,
+    "seed": 42,
 }
 
 _WAN22_14B_PARAMS = {
@@ -54,6 +56,7 @@ _WAN22_14B_PARAMS = {
     "max_sequence_length": 512,
     "num_frames": 81,
     "frame_rate": 16.0,
+    "seed": 42,
 }
 
 _WAN22_5B_PARAMS = {
@@ -64,6 +67,7 @@ _WAN22_5B_PARAMS = {
     "max_sequence_length": 512,
     "num_frames": 121,
     "frame_rate": 24.0,
+    "seed": 42,
 }
 
 _WAN22_EXTRA_SPECS: Dict[str, ExtraParamSchema] = {

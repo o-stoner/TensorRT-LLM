@@ -19,15 +19,16 @@ import glob
 import json
 import os
 import random
+import shutil
 import subprocess
 import sys
-import textwrap
 import time
 import urllib.request
 import zipfile
 
 import pytest
 import torch
+import yaml
 from defs import conftest
 from defs.common import venv_check_call
 from defs.trt_test_alternative import check_call
@@ -35,12 +36,10 @@ from defs.trt_test_alternative import check_call
 WAN_T2V_MODEL_SUBPATH = "Wan2.1-T2V-1.3B-Diffusers"
 WAN22_A14B_FP8_MODEL_SUBPATH = "Wan2.2-T2V-A14B-Diffusers-FP8"
 WAN22_A14B_NVFP4_MODEL_SUBPATH = "Wan2.2-T2V-A14B-Diffusers-NVFP4"
+WAN21_I2V_480P_MODEL_SUBPATH = "Wan2.1-I2V-14B-480P-Diffusers"
+WAN22_I2V_MODEL_SUBPATH = "Wan2.2-I2V-14B-Diffusers"
 VISUAL_GEN_OUTPUT_VIDEO = "trtllm_output.mp4"
 DIFFUSERS_REFERENCE_VIDEO = "diffusers_reference.mp4"
-WAN_T2V_PROMPT = "A cute cat playing piano"
-WAN_T2V_HEIGHT = 480
-WAN_T2V_WIDTH = 832
-WAN_T2V_NUM_FRAMES = 165
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
 VISUAL_GEN_LPIPS_EVAL_SCRIPT = os.path.join(
@@ -50,6 +49,7 @@ VISUAL_GEN_LPIPS_GOLDEN_DIR = os.path.join(os.path.dirname(__file__), "golden", 
 VISUAL_GEN_LPIPS_GOLDEN_MEDIA_ZIP = os.path.join(
     VISUAL_GEN_LPIPS_GOLDEN_DIR, "visual_gen_lpips_golden_media.zip"
 )
+_VBENCH_GOLDEN_DIR = os.path.join(os.path.dirname(__file__), "vbench_golden")
 
 FLUX_LPIPS_PROMPT = "a tiny astronaut hatching from an egg on the moon"
 FLUX_LPIPS_HEIGHT = 256
@@ -111,34 +111,6 @@ VBENCH_DIMENSIONS = [
     "imaging_quality",
 ]
 
-# Golden VBench scores from HF reference video (WAN 2.1 1.3B); TRT-LLM is compared against these.
-VBENCH_WAN_GOLDEN_SCORES = {
-    "subject_consistency": 0.9381,
-    "background_consistency": 0.9535,
-    "motion_smoothness": 0.9923,
-    "dynamic_degree": 1.0000,
-    "aesthetic_quality": 0.5033,
-    "imaging_quality": 0.3033,
-}
-
-
-# TODO: Reference scores from bf16 baseline runs
-VBENCH_WAN22_A14B_FP8_GOLDEN_SCORES = {
-    "subject_consistency": 0.9173,
-    "background_consistency": 0.9717,
-    "motion_smoothness": 0.9865,
-    "dynamic_degree": 1.0000,
-    "aesthetic_quality": 0.5465,
-    "imaging_quality": 0.7142,
-}
-VBENCH_WAN22_A14B_NVFP4_GOLDEN_SCORES = {
-    "subject_consistency": 0.9173,
-    "background_consistency": 0.9717,
-    "motion_smoothness": 0.9865,
-    "dynamic_degree": 1.0000,
-    "aesthetic_quality": 0.5465,
-    "imaging_quality": 0.7142,
-}
 
 VBENCH_LTX2_BF16_GOLDEN_SCORES = {
     "subject_consistency": 0.9683,
@@ -207,8 +179,9 @@ def _visual_gen_deps(llm_venv):
     llm_venv.run_cmd(["-m", "pip", "install", "av"])
     llm_venv.run_cmd(["-m", "pip", "install", "diffusers>=0.37.0"])
     # Install ffmpeg system package required by save_video() for MP4 encoding
-    check_call(["apt-get", "update", "-y"], shell=False)
-    check_call(["apt-get", "install", "-y", "ffmpeg"], shell=False)
+    if shutil.which("ffmpeg") is None:
+        check_call(["apt-get", "update", "-y"], shell=False)
+        check_call(["apt-get", "install", "-y", "ffmpeg"], shell=False)
 
 
 @pytest.fixture(scope="session")
@@ -723,81 +696,6 @@ def test_wan22_t2v_lpips_against_golden(tmp_path):
     _assert_lpips_below_threshold(score, WAN_LPIPS_THRESHOLD)
 
 
-@pytest.fixture(scope="session")
-def wan_trtllm_video_path(_visual_gen_deps, llm_venv, llm_root):
-    """Generate input video via models/wan_t2v.py and return path to trtllm_output.mp4."""
-    return _generate_wan_video(llm_venv, llm_root, WAN_T2V_MODEL_SUBPATH, "wan")
-
-
-def _generate_wan_video(llm_venv, llm_root, model_subpath, output_subdir):
-    """Generate a video with examples/visual_gen/models/wan_t2v.py for a given checkpoint.
-
-    The slim example hardcodes prompt/H/W/frames (matching WAN_T2V_* constants
-    above), so this helper only synthesizes a VisualGenArgs YAML for engine
-    config (parallelism / attention / cuda graph) and passes it via
-    ``--visual_gen_args``.
-
-    Returns the path to the generated .mp4, or calls pytest.skip if the model
-    is not found under LLM_MODELS_ROOT.
-    """
-    scratch_space = conftest.llm_models_root()
-    model_path = os.path.join(scratch_space, model_subpath)
-    if not os.path.isdir(model_path):
-        pytest.skip(
-            f"Model not found: {model_path} "
-            f"(set LLM_MODELS_ROOT or place {model_subpath} under scratch)"
-        )
-    out_dir = os.path.join(llm_venv.get_working_directory(), "visual_gen_output", output_subdir)
-    os.makedirs(out_dir, exist_ok=True)
-    output_path = os.path.join(out_dir, VISUAL_GEN_OUTPUT_VIDEO)
-    if os.path.isfile(output_path):
-        return output_path
-
-    script_path = os.path.join(llm_root, "examples", "visual_gen", "models", "wan_t2v.py")
-    assert os.path.isfile(script_path), f"Visual gen script not found: {script_path}"
-
-    cfg_size = 2 if torch.cuda.device_count() >= 2 else 1
-    visual_gen_args_yaml = os.path.join(out_dir, "visual_gen_args.yaml")
-    with open(visual_gen_args_yaml, "w") as f:
-        f.write(
-            textwrap.dedent(
-                f"""\
-                attention_config:
-                  backend: VANILLA
-                parallel_config:
-                  cfg_size: {cfg_size}
-                  ulysses_size: 1
-                cuda_graph_config:
-                  enable: false
-                """
-            )
-        )
-
-    cmd = [
-        script_path,
-        "--model",
-        model_path,
-        "--visual_gen_args",
-        visual_gen_args_yaml,
-        "--output_path",
-        output_path,
-    ]
-    venv_check_call(llm_venv, cmd)
-    assert os.path.isfile(output_path), f"Visual gen did not produce {output_path}"
-    return output_path
-
-
-@pytest.fixture(scope="session")
-def wan22_a14b_fp8_video_path(_visual_gen_deps, llm_venv, llm_root):
-    """Generate video with Wan 2.2 A14B FP8 checkpoint."""
-    return _generate_wan_video(llm_venv, llm_root, WAN22_A14B_FP8_MODEL_SUBPATH, "wan22_fp8")
-
-
-@pytest.fixture(scope="session")
-def wan22_a14b_nvfp4_video_path(_visual_gen_deps, llm_venv, llm_root):
-    """Generate video with Wan 2.2 A14B NVFP4 checkpoint."""
-    return _generate_wan_video(llm_venv, llm_root, WAN22_A14B_NVFP4_MODEL_SUBPATH, "wan22_nvfp4")
-
 
 def _linear_type_to_quant_config(linear_type):
     """Map linear_type shortcut to quant_config dict for VisualGenArgs."""
@@ -1008,20 +906,6 @@ def _get_per_video_scores(results, video_path_substr):
     return scores
 
 
-def test_vbench_dimension_score_wan(vbench_repo_root, wan_trtllm_video_path, llm_venv):
-    """Run VBench on WAN TRT-LLM video; compare to golden HF reference scores (diff < 0.05 or TRT-LLM >= golden)."""
-    videos_dir = os.path.dirname(wan_trtllm_video_path)
-    assert os.path.isfile(wan_trtllm_video_path), "TRT-LLM video must exist"
-    _run_vbench_and_report(
-        vbench_repo_root,
-        videos_dir,
-        VISUAL_GEN_OUTPUT_VIDEO,
-        llm_venv,
-        title="WAN",
-        golden_scores=VBENCH_WAN_GOLDEN_SCORES,
-        max_score_diff=0.05,
-    )
-
 
 def _run_vbench_and_report(
     vbench_repo_root,
@@ -1106,39 +990,6 @@ def _run_vbench_and_report(
         )
     return scores_trtllm
 
-
-def test_vbench_dimension_score_wan22_a14b_fp8(
-    vbench_repo_root, wan22_a14b_fp8_video_path, llm_venv
-):
-    """VBench accuracy for Wan 2.2 A14B FP8 — full generate + evaluate."""
-    videos_dir = os.path.dirname(wan22_a14b_fp8_video_path)
-    assert os.path.isfile(wan22_a14b_fp8_video_path), "FP8 video must exist"
-    _run_vbench_and_report(
-        vbench_repo_root,
-        videos_dir,
-        VISUAL_GEN_OUTPUT_VIDEO,
-        llm_venv,
-        title="WAN 2.2 A14B FP8",
-        golden_scores=VBENCH_WAN22_A14B_FP8_GOLDEN_SCORES,
-        max_score_diff=0.06,
-    )
-
-
-def test_vbench_dimension_score_wan22_a14b_nvfp4(
-    vbench_repo_root, wan22_a14b_nvfp4_video_path, llm_venv
-):
-    """VBench accuracy for Wan 2.2 A14B NVFP4 — full generate + evaluate."""
-    videos_dir = os.path.dirname(wan22_a14b_nvfp4_video_path)
-    assert os.path.isfile(wan22_a14b_nvfp4_video_path), "NVFP4 video must exist"
-    _run_vbench_and_report(
-        vbench_repo_root,
-        videos_dir,
-        VISUAL_GEN_OUTPUT_VIDEO,
-        llm_venv,
-        title="WAN 2.2 A14B NVFP4",
-        golden_scores=VBENCH_WAN22_A14B_NVFP4_GOLDEN_SCORES,
-        max_score_diff=0.05,
-    )
 
 
 def test_vbench_dimension_score_ltx2_bf16(vbench_repo_root, ltx2_bf16_video_path, llm_venv):
@@ -1297,3 +1148,278 @@ def test_wan_t2v_example(_visual_gen_deps, llm_root, llm_venv):
         ],
     )
     assert os.path.isfile(output_path), f"Example did not produce output at {output_path}"
+
+
+# =============================================================================
+# Wan T2V unified harness — Level 1 (example runs) + Level 2 (VBench quality).
+# To add a new model variant, add one entry to _WAN_TEST_CONFIGS.
+# =============================================================================
+
+# Each entry: (model_subpath, config_name, output_subdir, golden_key, title).
+#
+# output_subdir: unique subdirectory for this variant's generated video.
+# golden_key:    which vbench_golden/<golden_key>.json to compare against.
+#
+# Baseline variants use their own golden (output_subdir == golden_key).
+# Optimization variants point golden_key at their baseline model's golden —
+# e.g. CacheDiT on FP8 compares against "wan22_fp8" to verify the optimization
+# does not degrade quality beyond the allowed threshold.
+#
+# To add a new optimization: append an entry pointing golden_key at the
+# appropriate baseline, generate the golden offline if it doesn't exist yet,
+# commit it, and the test gates quality automatically on every future run.
+_WAN_TEST_CONFIGS = [
+    pytest.param(
+        WAN_T2V_MODEL_SUBPATH,
+        "wan2.1-t2v-bf16-1gpu.yaml",
+        "wan",  # output_subdir
+        "wan",  # golden_key
+        "WAN 2.1 BF16",
+        id="wan21_bf16",
+    ),
+    pytest.param(
+        WAN22_A14B_NVFP4_MODEL_SUBPATH,
+        "wan2.2-t2v-fp4-1gpu.yaml",
+        "wan22_nvfp4",  # output_subdir
+        "wan22_nvfp4",  # golden_key
+        "WAN 2.2 NVFP4",
+        id="wan22_nvfp4",
+    ),
+    pytest.param(
+        WAN22_A14B_FP8_MODEL_SUBPATH,
+        "wan2.2-t2v-fp8-1gpu.yaml",
+        "wan22_fp8",  # output_subdir
+        "wan22_fp8",  # golden_key
+        "WAN 2.2 FP8",
+        id="wan22_fp8",
+    ),
+    pytest.param(
+        WAN22_A14B_FP8_MODEL_SUBPATH,
+        "wan2.2-t2v-fp8-1gpu-cacheDiT.yaml",
+        "wan22_fp8_cachedit",  # output_subdir (unique video dir)
+        "wan22_fp8",  # golden_key (compared against vanilla FP8 baseline)
+        "WAN 2.2 FP8 + CacheDiT",
+        id="wan22_fp8_cachedit",
+    ),
+]
+
+
+def _load_golden_scores(test_id: str):
+    """Load pre-generated VBench golden scores from vbench_golden/<test_id>.json.
+
+    Returns the scores dict if the file exists, or None if this is the first
+    calibration run (no golden file yet).
+    """
+    path = os.path.join(_VBENCH_GOLDEN_DIR, f"{test_id}.json")
+    if not os.path.isfile(path):
+        return None
+    with open(path) as f:
+        return json.load(f)
+
+
+def _create_test_config(base_yaml_path: str, output_dir: str, **overrides) -> str:
+    """Load a base YAML config, inject test-only overrides, write to a temp file.
+
+    Always injects skip_warmup=True to avoid CI warmup cost.
+    Returns path to the modified YAML file.
+    """
+    with open(base_yaml_path, "r") as f:
+        config = yaml.safe_load(f) or {}
+    config["skip_warmup"] = True
+    config.update(overrides)
+    test_config_path = os.path.join(output_dir, "test_config.yaml")
+    with open(test_config_path, "w") as f:
+        yaml.dump(config, f)
+    return test_config_path
+
+
+def _generate_wan_t2v_from_example(
+    llm_venv,
+    llm_root,
+    model_path: str,
+    output_subdir: str,
+    base_config_path: str,
+) -> str:
+    """Generate a Wan T2V video using examples/visual_gen/models/wan_t2v.py.
+
+    Prompt, resolution, frame count, and seed come from the script's inline
+    defaults and the model's default_params. Injects skip_warmup via YAML.
+    Returns path to the generated .mp4. Idempotent within a session.
+    """
+    out_dir = os.path.join(llm_venv.get_working_directory(), "visual_gen_output", output_subdir)
+    os.makedirs(out_dir, exist_ok=True)
+    output_path = os.path.join(out_dir, VISUAL_GEN_OUTPUT_VIDEO)
+
+    if os.path.isfile(output_path):
+        return output_path
+
+    script_path = os.path.join(llm_root, "examples", "visual_gen", "models", "wan_t2v.py")
+    assert os.path.isfile(script_path), f"Example script not found: {script_path}"
+    test_config_path = _create_test_config(base_config_path, out_dir)
+
+    venv_check_call(
+        llm_venv,
+        [
+            script_path,
+            "--model",
+            model_path,
+            "--extra_visual_gen_options",
+            test_config_path,
+            "--output_path",
+            output_path,
+        ],
+    )
+    assert os.path.isfile(output_path), f"Example script did not produce output at {output_path}"
+    return output_path
+
+
+def _generate_wan_i2v_from_example(
+    llm_venv,
+    llm_root,
+    model_path: str,
+    output_subdir: str,
+    base_config_path: str,
+) -> str:
+    """Generate a Wan I2V video using examples/visual_gen/models/wan_i2v.py.
+
+    The reference image (cat_piano.png) and prompt are hardcoded in the script.
+    Resolution, frame count, and seed come from the model's default_params.
+    Injects skip_warmup via YAML. Returns path to the generated .mp4.
+    Idempotent within a session.
+    """
+    out_dir = os.path.join(llm_venv.get_working_directory(), "visual_gen_output", output_subdir)
+    os.makedirs(out_dir, exist_ok=True)
+    output_path = os.path.join(out_dir, VISUAL_GEN_OUTPUT_VIDEO)
+
+    if os.path.isfile(output_path):
+        return output_path
+
+    script_path = os.path.join(llm_root, "examples", "visual_gen", "models", "wan_i2v.py")
+    assert os.path.isfile(script_path), f"Example script not found: {script_path}"
+    test_config_path = _create_test_config(base_config_path, out_dir)
+
+    venv_check_call(
+        llm_venv,
+        [
+            script_path,
+            "--model",
+            model_path,
+            "--extra_visual_gen_options",
+            test_config_path,
+            "--output_path",
+            output_path,
+        ],
+    )
+    assert os.path.isfile(output_path), f"Example script did not produce output at {output_path}"
+    return output_path
+
+
+@pytest.mark.parametrize(
+    "model_subpath,config_name,output_subdir,golden_key,title",
+    _WAN_TEST_CONFIGS,
+)
+def test_wan_t2v_vbench(
+    model_subpath,
+    config_name,
+    output_subdir,
+    golden_key,
+    title,
+    _visual_gen_deps,
+    vbench_repo_root,
+    llm_venv,
+    llm_root,
+):
+    """Unified Wan T2V test: Level 1 (video exists) + Level 2 (VBench quality).
+
+    Level 1: examples/visual_gen/models/wan_t2v.py produced a valid .mp4.
+    Level 2: all six VBench dimensions are within 0.05 of the offline-generated
+             golden scores loaded from vbench_golden/<golden_key>.json.
+
+    Baseline variants use their own golden (output_subdir == golden_key).
+    Optimization variants (e.g. CacheDiT) compare against the baseline model's
+    golden to verify the optimization does not degrade quality.
+    """
+    model_path = os.path.join(conftest.llm_models_root(), model_subpath)
+    if not os.path.isdir(model_path):
+        pytest.skip(f"Model not found: {model_path}")
+    base_config = os.path.join(llm_root, "examples", "visual_gen", "configs", config_name)
+    video_path = _generate_wan_t2v_from_example(
+        llm_venv, llm_root, model_path, output_subdir, base_config
+    )
+    assert os.path.isfile(video_path), "Level 1: video must exist"
+    _run_vbench_and_report(
+        vbench_repo_root,
+        os.path.dirname(video_path),
+        VISUAL_GEN_OUTPUT_VIDEO,
+        llm_venv,
+        title=title,
+        golden_scores=_load_golden_scores(golden_key),
+        max_score_diff=0.05,
+    )
+
+
+# =============================================================================
+# Wan I2V unified harness — Level 1 (example runs) + Level 2 (VBench quality).
+# To add a new model variant, add one entry to _WAN_I2V_TEST_CONFIGS.
+# Golden scores are loaded from vbench_golden/<golden_key>.json — generate
+# offline and commit before CI can gate on quality.
+# =============================================================================
+
+_WAN_I2V_TEST_CONFIGS = [
+    pytest.param(
+        WAN21_I2V_480P_MODEL_SUBPATH,
+        "wan2.1-i2v-bf16-1gpu.yaml",
+        "wan21_i2v_480p",  # output_subdir
+        "wan21_i2v_480p",  # golden_key
+        "WAN 2.1 I2V 480p BF16",
+        id="wan21_i2v_480p",
+    ),
+    pytest.param(
+        WAN22_I2V_MODEL_SUBPATH,
+        "wan2.2-i2v-bf16-1gpu.yaml",
+        "wan22_i2v",  # output_subdir
+        "wan22_i2v",  # golden_key
+        "WAN 2.2 I2V BF16",
+        id="wan22_i2v",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "model_subpath,config_name,output_subdir,golden_key,title",
+    _WAN_I2V_TEST_CONFIGS,
+)
+def test_wan_i2v_vbench(
+    model_subpath,
+    config_name,
+    output_subdir,
+    golden_key,
+    title,
+    _visual_gen_deps,
+    vbench_repo_root,
+    llm_venv,
+    llm_root,
+):
+    """Unified Wan I2V test: Level 1 (video exists) + Level 2 (VBench quality).
+
+    Level 1: examples/visual_gen/models/wan_i2v.py produced a valid .mp4.
+    Level 2: all six VBench dimensions are within 0.05 of the offline-generated
+             golden scores loaded from vbench_golden/<golden_key>.json.
+    """
+    model_path = os.path.join(conftest.llm_models_root(), model_subpath)
+    if not os.path.isdir(model_path):
+        pytest.skip(f"Model not found: {model_path}")
+    base_config = os.path.join(llm_root, "examples", "visual_gen", "configs", config_name)
+    video_path = _generate_wan_i2v_from_example(
+        llm_venv, llm_root, model_path, output_subdir, base_config
+    )
+    assert os.path.isfile(video_path), "Level 1: video must exist"
+    _run_vbench_and_report(
+        vbench_repo_root,
+        os.path.dirname(video_path),
+        VISUAL_GEN_OUTPUT_VIDEO,
+        llm_venv,
+        title=title,
+        golden_scores=_load_golden_scores(golden_key),
+        max_score_diff=0.05,
+    )

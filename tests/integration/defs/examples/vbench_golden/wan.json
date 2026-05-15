@@ -1,0 +1,8 @@
+{
+  "subject_consistency": 0.8757,
+  "background_consistency": 0.9315,
+  "motion_smoothness": 0.9946,
+  "dynamic_degree": 0.0,
+  "aesthetic_quality": 0.6787,
+  "imaging_quality": 0.5799
+}
