@@ -103,6 +103,9 @@ from tensorrt_llm import VisualGenArgs
 args = VisualGenArgs(model="/path/to/model", quant_config={"quant_algo": "FP8", "dynamic": True})
 ```
 
+For `visual_gen_flux.py`, use the `--linear_type` flag instead.
+Supported values: `default` (BF16/FP16), `trtllm-fp8-per-tensor`, `trtllm-fp8-blockwise`, `trtllm-nvfp4`.
+
 Omit `quant_config` for BF16/FP16 baseline.
 
 ### Quantized Attention

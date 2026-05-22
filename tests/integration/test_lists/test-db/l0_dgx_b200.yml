@@ -323,6 +323,7 @@ l0_dgx_b200:
   - examples/test_visual_gen.py::test_vbench_dimension_score_ltx2_fp8
   - examples/test_visual_gen.py::test_wan_t2v_vbench[wan21_bf16]
   - examples/test_visual_gen.py::test_wan_t2v_vbench[wan22_fp8]
+  - examples/test_visual_gen.py::test_wan_t2v_vbench[wan22_nvfp4]
   - examples/test_visual_gen.py::test_wan_i2v_vbench[wan21_i2v_480p]
   - examples/test_visual_gen.py::test_wan_i2v_vbench[wan22_i2v]
   - accuracy/test_llm_api_pytorch.py::TestQwen3_30B_A3B_Instruct_2507::test_skip_softmax_attention_4gpus[target_sparsity_0.5-fp8kv=False]

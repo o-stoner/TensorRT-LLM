@@ -33,7 +33,7 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="Wan-AI/Wan2.2-I2V-14B-Diffusers",
+        default="Wan-AI/Wan2.2-I2V-A14B-Diffusers",
         help="Model path or HuggingFace Hub ID",
     )
     parser.add_argument(
