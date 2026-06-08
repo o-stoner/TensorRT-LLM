@@ -13,16 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# 8-GPU Wan 2.2 T2V with FP8 blockwise dynamic quantization.
+# 1-GPU Wan 2.2 T2V BF16 baseline (no quantization).
 # Shared by offline examples (--extra_visual_gen_options) and trtllm-serve.
-quant_config:
-  quant_algo: FP8_BLOCK_SCALES
-  dynamic: true
-attention_config:
+attention:
   backend: VANILLA
-parallel_config:
-  cfg_size: 2
-  ulysses_size: 4
-  parallel_vae_size: 8
-cuda_graph_config:
-  enable: false
+parallel:
+  dit_cfg_size: 1
+  dit_ulysses_size: 1
+cuda_graph:
+  enable_cuda_graph: false

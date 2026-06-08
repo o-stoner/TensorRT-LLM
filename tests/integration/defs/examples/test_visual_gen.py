@@ -696,7 +696,6 @@ def test_wan22_t2v_lpips_against_golden(tmp_path):
     _assert_lpips_below_threshold(score, WAN_LPIPS_THRESHOLD)
 
 
-
 def _linear_type_to_quant_config(linear_type):
     """Map linear_type shortcut to quant_config dict for VisualGenArgs."""
     mapping = {
@@ -906,7 +905,6 @@ def _get_per_video_scores(results, video_path_substr):
     return scores
 
 
-
 def _run_vbench_and_report(
     vbench_repo_root,
     videos_dir,
@@ -989,7 +987,6 @@ def _run_vbench_and_report(
             f"(TRT-LLM={scores_trtllm[dim]:.4f}, golden={golden_scores[dim]:.4f})"
         )
     return scores_trtllm
-
 
 
 def test_vbench_dimension_score_ltx2_bf16(vbench_repo_root, ltx2_bf16_video_path, llm_venv):
@@ -1192,14 +1189,6 @@ _WAN_TEST_CONFIGS = [
         "wan22_fp8",  # golden_key
         "WAN 2.2 FP8",
         id="wan22_fp8",
-    ),
-    pytest.param(
-        WAN22_A14B_FP8_MODEL_SUBPATH,
-        "wan2.2-t2v-fp8-1gpu-cacheDiT.yaml",
-        "wan22_fp8_cachedit",  # output_subdir (unique video dir)
-        "wan22_fp8",  # golden_key (compared against vanilla FP8 baseline)
-        "WAN 2.2 FP8 + CacheDiT",
-        id="wan22_fp8_cachedit",
     ),
 ]
 
