@@ -219,6 +219,9 @@ class VisualGenMapping(DeviceMeshTopologyImpl):
         self._attn2d_col_group: Optional[ProcessGroup] = None
         # Flattened ``cp_row`` × ``cp_col`` submesh (Attention2D logical CP tile).
         self._cp_plane_mesh_flat: Optional[DeviceMesh] = None
+        # Mesh is build-once-per-process, so this stays valid; re-resolved in
+        # build_mesh() once the real mesh exists.
+        self._tp_pg: Optional[ProcessGroup] = self._group("tp")
 
         if dist.is_initialized() and world_size > 1:
             if self.tp_size > 1:
@@ -295,6 +298,7 @@ class VisualGenMapping(DeviceMeshTopologyImpl):
                 )
             if self._use_attn2d_plane:
                 self._attach_attn2d_groups_from_device_mesh()
+            self._tp_pg = self._group("tp")
             return
 
         shape = tuple(self._dim_sizes[d] for d in self._dim_names)
@@ -337,6 +341,8 @@ class VisualGenMapping(DeviceMeshTopologyImpl):
 
         if self._use_attn2d_plane:
             self._attach_attn2d_groups_from_device_mesh()
+
+        self._tp_pg = self._group("tp")
 
     def _attach_attn2d_groups_from_device_mesh(self) -> None:
         """Set Attention2D row/col process groups from the ``cp_row`` × ``cp_col`` submesh.
@@ -541,7 +547,7 @@ class VisualGenMapping(DeviceMeshTopologyImpl):
 
     @property
     def tp_group_pg(self) -> Optional[ProcessGroup]:
-        return self._group("tp")
+        return self._tp_pg
 
     @property
     def cfg_group(self) -> Optional[ProcessGroup]:

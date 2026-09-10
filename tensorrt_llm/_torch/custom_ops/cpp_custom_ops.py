@@ -112,7 +112,7 @@ def _register_fake():
         workspace: Optional[torch.Tensor],
         group: List[int],
         rank: int,
-        pg,
+        group_name: str,
         strategy: int,
         op: int,
         eps: float,

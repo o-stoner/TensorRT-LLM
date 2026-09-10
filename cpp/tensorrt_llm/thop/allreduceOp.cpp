@@ -48,6 +48,7 @@
 #include <cuda_runtime_api.h>
 #include <nccl.h>
 #include <torch/csrc/distributed/c10d/FileStore.hpp>
+#include <torch/csrc/distributed/c10d/GroupRegistry.hpp>
 #include <torch/csrc/distributed/c10d/ProcessGroup.hpp>
 #include <torch/csrc/distributed/c10d/ProcessGroupNCCL.hpp>
 #include <torch/csrc/distributed/c10d/Store.hpp>
@@ -1825,10 +1826,13 @@ std::vector<torch::Tensor> autotunedAllreduce(torch::Tensor const& input,
 std::vector<torch::Tensor> allreduce_pg(torch::Tensor const& input, torch::optional<torch::Tensor> const& residual,
     torch::optional<torch::Tensor> const& norm_weight, torch::optional<torch::Tensor> const& scale,
     torch::optional<torch::Tensor> const& bias, torch::optional<torch::Tensor> const& workspace,
-    torch::List<int64_t> const& group_, int64_t rank, c10::intrusive_ptr<c10d::ProcessGroup> const& pg,
-    int64_t const strategy_, int64_t const fusion_op_, double const eps_, bool const trigger_completion_at_end_)
+    torch::List<int64_t> const& group_, int64_t rank, std::string const& group_name, int64_t const strategy_,
+    int64_t const fusion_op_, double const eps_, bool const trigger_completion_at_end_)
 {
 #if ENABLE_MULTI_DEVICE
+    // Resolved by name (not passed directly) since Dynamo cannot proxy a ProcessGroup
+    // ScriptObject argument under torch.compile(fullgraph=True).
+    auto pg = c10d::resolve_process_group(group_name);
     auto const dtype = tensorrt_llm::runtime::TorchUtils::dataType(input.scalar_type());
     auto const strategy = static_cast<AllReduceStrategyType>(int8_t(strategy_));
     auto const fusion_op = static_cast<AllReduceFusionOp>(int8_t(fusion_op_));
@@ -2357,7 +2361,7 @@ TORCH_LIBRARY_FRAGMENT(trtllm, m)
         "Tensor? workspace,"
         "int[] group,"
         "int rank,"
-        "__torch__.torch.classes.c10d.ProcessGroup pg,"
+        "str group_name,"
         "int strategy,"
         "int op,"
         "float eps,"

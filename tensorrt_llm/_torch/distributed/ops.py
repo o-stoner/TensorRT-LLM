@@ -881,6 +881,16 @@ class AllReduce(nn.Module):
         self.symm_mem_allreduce = None
         self._disable_mpi = mpi_disabled()
 
+        # Resolved once here, outside forward(), so torch.compile(fullgraph=True)
+        # never has to trace the mesh/ProcessGroup lookup (the mesh is
+        # build-once-per-process, so this stays valid for the module's lifetime).
+        self._tp_group = self.mapping.tp_group
+        self._tp_group_name = None
+        if self._disable_mpi:
+            pg = self.mapping.tp_group_pg
+            assert pg is not None, "TP ProcessGroup not initialised"
+            self._tp_group_name = pg.group_name
+
         self.all_reduce_op = torch.ops.trtllm.allreduce_pg if self._disable_mpi else torch.ops.trtllm.allreduce
 
         # Propagate model-level prealloc config to AllReduceRunner once per
@@ -1057,12 +1067,9 @@ class AllReduce(nn.Module):
 
         additional_args = {}
         if self._disable_mpi:
-            # Get ProcessGroup from mapping
-            pg = self.mapping.tp_group_pg
-            assert pg is not None, "TP ProcessGroup not initialised"
             additional_args = {
                 "rank": torch.distributed.get_rank(),
-                "pg": pg.boxed(),
+                "group_name": self._tp_group_name,
             }
 
         # In case that AutoTuner brings potential perf regression
@@ -1081,7 +1088,7 @@ class AllReduce(nn.Module):
                     scale=all_reduce_params.scale,
                     bias=all_reduce_params.bias,
                     workspace=self.workspace,
-                    group=self.mapping.tp_group,
+                    group=self._tp_group,
                     strategy=allreduce_strategy,
                     op=all_reduce_params.fusion_op,
                     eps=all_reduce_params.eps,
@@ -1096,7 +1103,7 @@ class AllReduce(nn.Module):
                     scale=all_reduce_params.scale,
                     bias=all_reduce_params.bias,
                     workspace=self.workspace,
-                    group=self.mapping.tp_group,
+                    group=self._tp_group,
                     strategy=allreduce_strategy,
                     op=all_reduce_params.fusion_op,
                     eps=all_reduce_params.eps,
@@ -1111,7 +1118,7 @@ class AllReduce(nn.Module):
                 scale=all_reduce_params.scale,
                 bias=all_reduce_params.bias,
                 workspace=self.workspace,
-                group=self.mapping.tp_group,
+                group=self._tp_group,
                 strategy=allreduce_strategy,
                 op=all_reduce_params.fusion_op,
                 eps=all_reduce_params.eps,

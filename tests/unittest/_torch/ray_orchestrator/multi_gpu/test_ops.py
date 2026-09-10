@@ -65,7 +65,8 @@ class PgOpTest:
             "group": self.mapping.tp_group,
         })
         if pg_op_name == "allreduce_pg":
-            additional_kwargs.update({"pg": self.mapping.tp_group_pg.boxed()})
+            additional_kwargs.update(
+                {"group_name": self.mapping.tp_group_pg.group_name})
         else:
             additional_kwargs.update(
                 {"process_group": self.mapping.tp_group_pg.boxed()})
